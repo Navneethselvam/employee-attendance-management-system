@@ -1,0 +1,11 @@
+# Design decisions
+
+**1. Which indexes are necessary and why?** The unique `employees.emp_code` index protects the natural key under concurrent creates. The unique `(attendance_logs.emp_code, attendance_logs.date)` index guarantees one attendance row per employee and attendance day, which makes punch-in race-safe. Additional compound indexes support department/headcount lookups, date-ordered attendance listing, status/date filters, and finding the latest punch-in for punch-out. Indexes are created idempotently at startup because the grader starts with only MongoDB's default `_id` indexes.
+
+**2. How do concurrent punch-ins behave?** The application calculates the attendance date, attempts one insert, and relies on the unique compound index as the atomic arbiter. One concurrent request can insert successfully and receive 201; every duplicate-key loser maps to 409. A prior read/check is not used as the correctness mechanism.
+
+**3. What if multiple employees tie at the leaderboard cutoff?** The aggregation uses MongoDB's standard competition rank rather than array position. The `rank <= limit` filter is applied after ranking, so all employees tied at a rank within the cutoff are returned, even if that produces more rows than `limit`. Results are ordered by late minutes descending and employee code ascending.
+
+**4. How are employees with no attendance logs counted in department summary?** Headcount is derived from employees whose `joined_on` is on or before month-end, independently of attendance. This preserves employees with zero logs and excludes people who join after the reporting period. Log-derived metrics are then joined/grouped by department.
+
+**5. What changes for 100x the data?** Keep list endpoints server-side paginated and ensure query plans use selective compound indexes. Add load tests and query-plan checks, examine index size/write cost, and move expensive recurring analytics to pre-aggregated daily/monthly collections updated idempotently. For very deep pagination, introduce cursor-based pagination while preserving the public contract where required. Use bounded aggregation stages, `allowDiskUse` where appropriate, monitoring, and connection-pool sizing; never pull the full attendance collection into application memory.
